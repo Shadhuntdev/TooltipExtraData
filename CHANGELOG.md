@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project follows Semantic Versioning.
 
+## [1.4.7] - 2026-10-24
+
+### Added
+- Item macros on the action bar now show current/max stack, ItemID and IconID, the same as items placed directly on the bar.
+
+### Fixed
+- Fixed "attempt to compare local 'specID' (a secret number value)" when inspecting players in restricted contexts.
+- Secret spec, item level and repair values returned by inspect APIs are now ignored instead of compared, preventing taint errors in player info tooltips.
+
+## [1.4.6] - 2026-08-11
+
+### Changed
+- Update interface id. added 120100
+
+
+## [1.4.5] - 2026-06-16
+
+### Changed
+- Update interface id. added 120007
+
 ## [1.4.4] - 2026-05-28
 
 ### Added

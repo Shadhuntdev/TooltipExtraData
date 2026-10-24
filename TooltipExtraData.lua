@@ -86,6 +86,35 @@ local function SafeCall(fn, ...)
   return pcall(fn, ...)
 end
 
+-- Detecta valores secretos de Retail (no se pueden comparar ni indexar).
+local function IsSecret(value)
+  if issecretvalue then
+    local ok, secret = pcall(issecretvalue, value)
+    return not ok or secret and true or false
+  end
+  return false
+end
+
+-- Devuelve un número utilizable, o nil si es secreto o no numérico.
+local function SafeNumber(value)
+  if value == nil or IsSecret(value) then
+    return nil
+  end
+
+  local ok, n = pcall(tonumber, value)
+  if not ok or type(n) ~= "number" then
+    return nil
+  end
+
+  -- Si la comparación falla, el número sigue siendo secreto.
+  local okCmp = pcall(function() return n > 0 end)
+  if not okCmp then
+    return nil
+  end
+
+  return n
+end
+
 local function SafeCompare(a, b)
   local ta, tb = type(a), type(b)
   if ta ~= tb then
@@ -523,16 +552,20 @@ local function StartInspectTicker()
 end
 
 local function GetSpecNameByID(specID)
-  if not specID or specID == 0 then
+  specID = SafeNumber(specID)
+  if not specID or specID <= 0 then
     return nil
   end
 
-  local _, name = GetSpecializationInfoByID(specID)
+  local ok, _, name = SafeCall(GetSpecializationInfoByID, specID)
+  if not ok or IsSecret(name) then
+    return nil
+  end
   return name
 end
 
 local function FormatItemLevel(value)
-  value = tonumber(value)
+  value = SafeNumber(value)
   if not value or value <= 0 then
     return nil
   end
@@ -541,7 +574,7 @@ local function FormatItemLevel(value)
 end
 
 local function FormatRepairPercent(value)
-  value = tonumber(value)
+  value = SafeNumber(value)
   if not value or value < 0 then
     return nil
   end
@@ -814,14 +847,16 @@ local function ApplyPlayerInfoToTooltip(tooltip, unit)
           return C_SpecializationInfo.GetInspectSpecialization("player")
         end
       end)
-      if ok and specID and specID > 0 then
+      specID = ok and SafeNumber(specID) or nil
+      if specID and specID > 0 then
         specName = GetSpecNameByID(specID)
       end
     end
 
     local itemLevel = (C_PaperDollInfo and C_PaperDollInfo.GetInspectItemLevel and C_PaperDollInfo.GetInspectItemLevel("player"))
     -- Fallback: use GetAverageItemLevel when available
-    if (not itemLevel or tonumber(itemLevel) == 0) and GetAverageItemLevel then
+    itemLevel = SafeNumber(itemLevel)
+    if (not itemLevel or itemLevel == 0) and GetAverageItemLevel then
       local ok, avg = pcall(function() return GetAverageItemLevel() end)
       if ok and avg and tonumber(avg) then
         itemLevel = avg
@@ -1343,6 +1378,55 @@ local function hookLoot()
 end
 
 -- Action bars
+-- Resuelve el ItemID del objeto que muestra una macro en la barra de acción.
+local function GetMacroActionItemID(tooltip, slot)
+  local macroIndex
+
+  if GetActionText and GetMacroIndexByName then
+    local okName, macroName = SafeCall(GetActionText, slot)
+    if okName and type(macroName) == "string" and not IsSecret(macroName) then
+      local okIndex, index = SafeCall(GetMacroIndexByName, macroName)
+      index = okIndex and SafeNumber(index) or nil
+      if index and index > 0 then
+        macroIndex = index
+      end
+    end
+  end
+
+  if macroIndex and GetMacroItem then
+    local okItem, itemName, itemLink = SafeCall(GetMacroItem, macroIndex)
+    if okItem then
+      if not IsSecret(itemLink) then
+        local okLink, itemId = pcall(GetItemIDFromLink, itemLink)
+        if okLink and itemId then
+          return itemId
+        end
+      end
+
+      if type(itemName) == "string" and not IsSecret(itemName) and C_Item and C_Item.GetItemInfoInstant then
+        local okInfo, itemId = SafeCall(C_Item.GetItemInfoInstant, itemName)
+        itemId = okInfo and SafeNumber(itemId) or nil
+        if itemId then
+          return itemId
+        end
+      end
+    end
+  end
+
+  -- Fallback: el objeto que Blizzard ya cargó en el tooltip de la macro.
+  if tooltip and tooltip.GetItem then
+    local okTip, _, link = SafeCall(tooltip.GetItem, tooltip)
+    if okTip and link and not IsSecret(link) then
+      local okLink, itemId = pcall(GetItemIDFromLink, link)
+      if okLink and itemId then
+        return itemId
+      end
+    end
+  end
+
+  return nil
+end
+
 local function hookActions()
   if not GetActionInfo then return end
 
@@ -1351,16 +1435,24 @@ local function hookActions()
     if not slot then return end
 
     local actionType, id = GetActionInfo(slot)
-    if actionType ~= "item" or not id then return end
 
-    local itemId = tonumber(id)
+    local itemId
+    if actionType == "item" and id then
+      itemId = tonumber(id)
+    elseif actionType == "macro" then
+      itemId = GetMacroActionItemID(tooltip, slot)
+    end
     if not itemId then return end
 
-    local count = GetActionCount and GetActionCount(slot)
-    count = NormalizeCount(count)
-
-    if count == nil and GetItemCount then
+    local count
+    if actionType == "macro" then
+      -- En macros GetActionCount puede devolver 0 o un valor secreto; se usa el total en bolsas.
       count = GetOwnedItemCount(itemId)
+    else
+      count = NormalizeCount(GetActionCount and GetActionCount(slot))
+      if count == nil and GetItemCount then
+        count = GetOwnedItemCount(itemId)
+      end
     end
 
     ApplyItemModules(tooltip, itemId, count)
@@ -1446,12 +1538,18 @@ inspectFrame:SetScript("OnEvent", function(_, event, guid)
   local currentTooltip = pendingInspectTooltip
   local currentUnit = pendingInspectUnit
 
-  local specID = GetInspectSpecialization and GetInspectSpecialization(currentUnit)
+  local okSpec, specID = SafeCall(GetInspectSpecialization, currentUnit)
+  specID = okSpec and SafeNumber(specID) or nil
   local specName = GetSpecNameByID(specID)
-  local itemLevel = C_PaperDollInfo and C_PaperDollInfo.GetInspectItemLevel and C_PaperDollInfo.GetInspectItemLevel(currentUnit)
-  local repairPercent = GetInspectRepairPercent(currentUnit)
 
-  if specName or (tonumber(itemLevel) and tonumber(itemLevel) > 0) or repairPercent then
+  local itemLevel
+  if C_PaperDollInfo then
+    local okIlvl, value = SafeCall(C_PaperDollInfo.GetInspectItemLevel, currentUnit)
+    itemLevel = okIlvl and SafeNumber(value) or nil
+  end
+  local repairPercent = SafeNumber(GetInspectRepairPercent(currentUnit))
+
+  if specName or (itemLevel and itemLevel > 0) or repairPercent then
     SetCachedInspectData(currentUnit, {
       specID = specID,
       specName = specName,
