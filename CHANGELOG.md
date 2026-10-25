@@ -10,6 +10,9 @@ and this project follows Semantic Versioning.
 ### Added
 - Item macros on the action bar now show current/max stack, ItemID and IconID, the same as items placed directly on the bar.
 
+### Changed
+- Update interface id. Now 120105, 120107.
+
 ### Fixed
 - Fixed "attempt to compare local 'specID' (a secret number value)" when inspecting players in restricted contexts.
 - Secret spec, item level and repair values returned by inspect APIs are now ignored instead of compared, preventing taint errors in player info tooltips.
