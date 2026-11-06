@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project follows Semantic Versioning.
 
+## [1.5.0] - 2026-11-06
+
+### Added
+- Support for World of Warcraft: Forever (1.60.1). Added interface 16001 to the TOC.
+
+### Fixed
+- Player spec in inspect tooltips now falls back to `C_SpecializationInfo` when the global specialization functions are unavailable (Forever).
+- The player's own spec lookup now ignores secret values and uses `C_SpecializationInfo` when the global functions are unavailable.
+
 ## [1.4.7] - 2026-10-24
 
 ### Added
@@ -96,7 +105,7 @@ and this project follows Semantic Versioning.
 - Optimized inspect queue processing to minimize unnecessary API calls.
 
 ### Stability
-- Improved compatibility with Retail security restrictions related to “secret” values.
+- Improved compatibility with Retail security restrictions related to â€œsecretâ€ values.
 - Hardened tooltip update behavior during rapid mouseover changes.
 - Improved consistency of player info display across delayed inspect callbacks and tooltip refreshes.
 

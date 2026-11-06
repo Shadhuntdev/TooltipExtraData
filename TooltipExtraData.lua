@@ -564,6 +564,19 @@ local function GetSpecNameByID(specID)
   return name
 end
 
+-- Forever (1.60.1) no expone las funciones globales de especialización; usa C_SpecializationInfo.
+local GetInspectSpecializationAPI = GetInspectSpecialization
+  or (C_SpecializationInfo and C_SpecializationInfo.GetInspectSpecialization)
+local GetSpecializationAPI = GetSpecialization
+  or (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization)
+local GetSpecializationInfoAPI = GetSpecializationInfo
+  or (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo)
+
+local function GetInspectSpecID(unit)
+  local ok, specID = SafeCall(GetInspectSpecializationAPI, unit)
+  return ok and SafeNumber(specID) or nil
+end
+
 local function FormatItemLevel(value)
   value = SafeNumber(value)
   if not value or value <= 0 then
@@ -830,24 +843,18 @@ local function ApplyPlayerInfoToTooltip(tooltip, unit)
   -- is enabled, fetch local data immediately (no inspect queue).
   if UnitIsUnit and UnitIsUnit(unit, "player") and ModuleOn("playerself") then
     local specName = nil
-    if GetSpecialization then
-      local specIndex = GetSpecialization()
-      if specIndex and specIndex > 0 then
-        local _, name = GetSpecializationInfo(specIndex)
+    local okIndex, specIndex = SafeCall(GetSpecializationAPI)
+    specIndex = okIndex and SafeNumber(specIndex) or nil
+    if specIndex and specIndex > 0 then
+      local okInfo, _, name = SafeCall(GetSpecializationInfoAPI, specIndex)
+      if okInfo and type(name) == "string" and not IsSecret(name) then
         specName = name
       end
     end
 
     -- Fallback: try inspect-style API to get spec ID/name for player
-    if not specName and (GetInspectSpecialization or (C_SpecializationInfo and C_SpecializationInfo.GetInspectSpecialization)) then
-      local ok, specID = pcall(function()
-        if GetInspectSpecialization then
-          return GetInspectSpecialization("player")
-        elseif C_SpecializationInfo and C_SpecializationInfo.GetInspectSpecialization then
-          return C_SpecializationInfo.GetInspectSpecialization("player")
-        end
-      end)
-      specID = ok and SafeNumber(specID) or nil
+    if not specName then
+      local specID = GetInspectSpecID("player")
       if specID and specID > 0 then
         specName = GetSpecNameByID(specID)
       end
@@ -1538,8 +1545,7 @@ inspectFrame:SetScript("OnEvent", function(_, event, guid)
   local currentTooltip = pendingInspectTooltip
   local currentUnit = pendingInspectUnit
 
-  local okSpec, specID = SafeCall(GetInspectSpecialization, currentUnit)
-  specID = okSpec and SafeNumber(specID) or nil
+  local specID = GetInspectSpecID(currentUnit)
   local specName = GetSpecNameByID(specID)
 
   local itemLevel

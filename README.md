@@ -9,4 +9,4 @@ Available from [Curseforge](https://www.curseforge.com/wow/addons/tooltipextrada
 *   shows IconID (texture FileID) below ItemID/SpellID
 *   shows Player Ilvl
 
-Supports Retail (Midnight)
+Supports Retail (Midnight) and WoW Forever
