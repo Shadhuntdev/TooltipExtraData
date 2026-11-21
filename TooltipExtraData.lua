@@ -21,6 +21,19 @@ local defaults = {
     iconid     = true,  -- IconID (texture FileID) below ItemID/SpellID
     playerinfo = true,  -- target player's spec, average item level, and repair percentage via inspect
     playerself = true,  -- own player's spec/item level/repair shown on your own tooltip
+    proficons  = true,  -- icons of the professions that use the item as a reagent
+  },
+
+  professionIcons = {
+    position = "bottom", -- "bottom" (end of tooltip) | "title" (below the item name)
+    size     = "medium", -- "small" | "medium" | "large"
+    filter   = "all",    -- "all" | "learned" | "manual"
+    -- Manual selection, keyed by profession SkillLine ID
+    selected = {
+      [171] = true, [164] = true, [333] = true, [202] = true, [182] = true,
+      [773] = true, [755] = true, [165] = true, [186] = true, [393] = true,
+      [197] = true, [185] = true, [356] = true, [129] = true,
+    },
   },
 }
 
@@ -737,6 +750,167 @@ function TED.Modules.IconID(tooltip, iconId)
   markAdded(tooltip, "iconid", iconId)
 end
 
+-- ---- ProfessionIcons module
+-- Bit order must match $Professions in scripts/build-profession-data.ps1 (bit = 2^(index-1)).
+local PROFESSION_ORDER = { 171, 164, 333, 202, 182, 773, 755, 165, 186, 393, 197, 185, 356, 129 }
+
+local PROFESSION_NAMES = {
+  [171] = "Alchemy", [164] = "Blacksmithing", [333] = "Enchanting", [202] = "Engineering",
+  [182] = "Herbalism", [773] = "Inscription", [755] = "Jewelcrafting", [165] = "Leatherworking",
+  [186] = "Mining", [393] = "Skinning", [197] = "Tailoring", [185] = "Cooking",
+  [356] = "Fishing", [129] = "First Aid",
+}
+
+local PROFESSION_ICON_SIZES = { small = 14, medium = 18, large = 24 }
+
+local PROFESSION_BITS = {}
+for index, skillLine in ipairs(PROFESSION_ORDER) do
+  PROFESSION_BITS[skillLine] = 2 ^ (index - 1)
+end
+
+local function HasBit(mask, bitValue)
+  return math.floor(mask / bitValue) % 2 == 1
+end
+
+local function GetProfessionIconSettings()
+  return (TooltipExtraDataDB and TooltipExtraDataDB.professionIcons) or defaults.professionIcons
+end
+
+local function GetProfessionDisplayName(skillLine)
+  if C_TradeSkillUI and C_TradeSkillUI.GetTradeSkillDisplayName then
+    local ok, name = SafeCall(C_TradeSkillUI.GetTradeSkillDisplayName, skillLine)
+    if ok and type(name) == "string" and name ~= "" and not IsSecret(name) then
+      return name
+    end
+  end
+  return PROFESSION_NAMES[skillLine] or tostring(skillLine)
+end
+
+-- Professions available in this client (Forever has no Inscription/Jewelcrafting, Retail no First Aid).
+local function GetAvailableProfessions()
+  local data = TED.ProfessionData
+  local list = {}
+  for _, skillLine in ipairs(PROFESSION_ORDER) do
+    if data and data.icons and data.icons[skillLine] then
+      list[#list + 1] = skillLine
+    end
+  end
+  return list
+end
+
+-- Learned professions mask, invalidated on SKILL_LINES_CHANGED.
+local learnedProfessionMask
+
+local function GetLearnedProfessionMask()
+  if learnedProfessionMask then return learnedProfessionMask end
+
+  local mask = 0
+  local okList, p1, p2, archaeology, fishing, cooking = SafeCall(GetProfessions)
+  if okList then
+    local indices = { p1, p2, archaeology, fishing, cooking }
+    for i = 1, 5 do
+      local index = SafeNumber(indices[i])
+      if index then
+        local okInfo, _, _, _, _, _, _, skillLine = SafeCall(GetProfessionInfo, index)
+        skillLine = okInfo and SafeNumber(skillLine) or nil
+        local bitValue = skillLine and PROFESSION_BITS[skillLine]
+        if bitValue and not HasBit(mask, bitValue) then
+          mask = mask + bitValue
+        end
+      end
+    end
+  end
+
+  learnedProfessionMask = mask
+  return mask
+end
+
+local function BuildProfessionIconsText(itemId)
+  local data = TED.ProfessionData
+  if not data or not data.items or not data.icons then return nil end
+
+  local itemMask = data.items[itemId]
+  if not itemMask then return nil end
+
+  local settings = GetProfessionIconSettings()
+  local filter = settings.filter
+  local learnedMask = (filter == "learned") and GetLearnedProfessionMask() or nil
+  local size = PROFESSION_ICON_SIZES[settings.size] or PROFESSION_ICON_SIZES.medium
+
+  local parts = {}
+  for _, skillLine in ipairs(PROFESSION_ORDER) do
+    local bitValue = PROFESSION_BITS[skillLine]
+    local icon = data.icons[skillLine]
+    if icon and HasBit(itemMask, bitValue) then
+      local show = true
+      if filter == "learned" then
+        show = HasBit(learnedMask, bitValue)
+      elseif filter == "manual" then
+        show = settings.selected and settings.selected[skillLine] and true or false
+      end
+      if show then
+        parts[#parts + 1] = "|T" .. icon .. ":" .. size .. ":" .. size .. "|t"
+      end
+    end
+  end
+
+  if #parts == 0 then return nil end
+  return table.concat(parts, " ")
+end
+
+-- Puts the icons at the start of line 2 so they appear right below the item name.
+-- The title line is left untouched because other addons read the item name from it.
+local function InsertBelowTitle(tooltip, text)
+  local name = getTooltipName(tooltip)
+  if not name or not tooltip.NumLines then return false end
+
+  local okLines, numLines = SafeCall(tooltip.NumLines, tooltip)
+  numLines = okLines and SafeNumber(numLines) or nil
+  if not numLines or numLines < 2 then return false end
+
+  local line = _G[name .. "TextLeft2"]
+  if not line or not line.GetText or not line.SetText then return false end
+
+  local okText, current = SafeCall(line.GetText, line)
+  if not okText or IsSecret(current) then return false end
+
+  local newText = text
+  if type(current) == "string" and current ~= "" then
+    newText = text .. "\n" .. current
+  end
+
+  local ok = SafeCall(line.SetText, line, newText)
+  if ok then
+    SafeCall(tooltip.Show, tooltip)
+  end
+  return ok
+end
+
+function TED.Modules.ProfessionIcons(tooltip, itemId)
+  if not ModuleOn("proficons") then return end
+  if not tooltip or not itemId then return end
+
+  itemId = tonumber(itemId)
+  if not itemId then return end
+
+  if wasAdded(tooltip, "proficons", itemId) then return end
+
+  local text = BuildProfessionIconsText(itemId)
+  if not text then return end
+
+  local placed = false
+  if GetProfessionIconSettings().position == "title" then
+    placed = InsertBelowTitle(tooltip, text)
+  end
+  if not placed then
+    -- Blank line to separate the icons from the previous line.
+    addSingleLine(tooltip, " ")
+    addSingleLine(tooltip, text)
+  end
+
+  markAdded(tooltip, "proficons", itemId)
+end
+
 -- Tooltip line scanning intentionally disabled for player info to avoid secret string comparisons.
 
 -- ---- PlayerInfo module
@@ -801,6 +975,8 @@ local function ApplyItemModules(tooltip, itemId, count)
   if okIcon and iconId then
     TED.Modules.IconID(tooltip, iconId)
   end
+
+  TED.Modules.ProfessionIcons(tooltip, itemId)
 end
 
 local function ApplySpellModules(tooltip, spellId)
@@ -1678,6 +1854,9 @@ f:SetScript("OnEvent", function(_, event, arg1)
     end)
 
     f:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+    f:RegisterEvent("SKILL_LINES_CHANGED")
+  elseif event == "SKILL_LINES_CHANGED" then
+    learnedProfessionMask = nil
   elseif event == "UPDATE_MOUSEOVER_UNIT" then
     if not Enabled() or not ModuleOn("playerinfo") then return end
     local unit = "mouseover"
@@ -1727,10 +1906,37 @@ SlashCmdList.TOOLTIPEXTRADATA = function(msg)
     TooltipExtraDataDB.modules.playerself = not TooltipExtraDataDB.modules.playerself
     print("TooltipExtraData: playerself = " .. tostring(TooltipExtraDataDB.modules.playerself))
 
+  elseif msg == "proficons" then
+    TooltipExtraDataDB.modules.proficons = not TooltipExtraDataDB.modules.proficons
+    print("TooltipExtraData: proficons = " .. tostring(TooltipExtraDataDB.modules.proficons))
+
+  elseif msg:match("^proficons ") then
+    local arg = msg:match("^proficons%s+(.-)%s*$")
+    local settings = TooltipExtraDataDB.professionIcons
+    local key, value
+
+    if arg == "bottom" or arg == "title" then
+      key, value = "position", arg
+    elseif arg == "small" or arg == "medium" or arg == "large" then
+      key, value = "size", arg
+    elseif arg == "all" or arg == "learned" or arg == "manual" then
+      key, value = "filter", arg
+    end
+
+    if key then
+      settings[key] = value
+      print("TooltipExtraData: proficons " .. key .. " = " .. value)
+    else
+      print("/ted proficons bottom | title | small | medium | large | all | learned | manual")
+    end
+
   else
     print("TooltipExtraData commands:")
     print("/ted on | off")
-    print("/ted stack | itemid | spellid | iconid | playerinfo  (toggle)")
+    print("/ted stack | itemid | spellid | iconid | playerinfo | playerself | proficons  (toggle)")
+    print("/ted proficons bottom | title  (position)")
+    print("/ted proficons small | medium | large  (icon size)")
+    print("/ted proficons all | learned | manual  (profession filter)")
   end
 end
 
@@ -1765,6 +1971,55 @@ local function CreateCheck(parent, label, tooltipText, getter, setter)
   return cb
 end
 
+-- options: { { value = ..., text = ... }, ... }; buttons are laid out in `columns` columns.
+local function CreateRadioGroup(parent, label, options, getter, setter, columns)
+  columns = columns or 1
+  local columnWidth, rowHeight = 110, 22
+
+  local group = CreateFrame("Frame", nil, parent)
+  group.buttons = {}
+
+  local header = group:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+  header:SetPoint("TOPLEFT", 0, 0)
+  header:SetText(label)
+
+  for i, option in ipairs(options) do
+    local column = (i - 1) % columns
+    local row = math.floor((i - 1) / columns)
+
+    local rb = CreateFrame("CheckButton", nil, group, "UIRadioButtonTemplate")
+    rb:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 4 + column * columnWidth, -6 - row * rowHeight)
+    rb.value = option.value
+
+    local text = rb:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    text:SetPoint("LEFT", rb, "RIGHT", 4, 0)
+    text:SetText(option.text)
+
+    rb:SetScript("OnClick", function()
+      setter(option.value)
+      group:Refresh()
+    end)
+
+    group.buttons[#group.buttons + 1] = rb
+  end
+
+  local rows = math.ceil(#options / columns)
+  group:SetSize(columns * columnWidth, 18 + rows * rowHeight)
+
+  function group:Refresh()
+    local ok, current = pcall(getter)
+    for _, rb in ipairs(self.buttons) do
+      rb:SetChecked(ok and rb.value == current)
+    end
+    if self.OnRefresh then
+      self:OnRefresh(ok and current or nil)
+    end
+  end
+
+  group:Refresh()
+  return group
+end
+
 panel:SetScript("OnShow", function(self)
   if type(TooltipExtraDataDB) ~= "table" then
     TooltipExtraDataDB = {}
@@ -1777,22 +2032,39 @@ panel:SetScript("OnShow", function(self)
         c:Refresh()
       end
     end
+    if self.UpdateContentHeight then
+      self.UpdateContentHeight()
+    end
     return
   end
 
   self._init = true
   self._checks = {}
 
-  local title = self:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+  -- All options live in a scrollable content frame so the panel fits any window height.
+  local scroll = CreateFrame("ScrollFrame", nil, self, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", 0, -4)
+  scroll:SetPoint("BOTTOMRIGHT", -28, 4)
+
+  local content = CreateFrame("Frame", nil, scroll)
+  content:SetSize(math.max((self:GetWidth() or 0) - 28, 400), 1)
+  scroll:SetScrollChild(content)
+  scroll:SetScript("OnSizeChanged", function(_, width)
+    if width and width > 0 then
+      content:SetWidth(width)
+    end
+  end)
+
+  local title = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
   title:SetPoint("TOPLEFT", 16, -16)
   title:SetText("TooltipExtraData")
 
-  local sub = self:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+  local sub = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
   sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
   sub:SetText("Toggle what data is shown in tooltips.")
 
   local enabledCB = CreateCheck(
-    self,
+    content,
     "Enabled",
     "Master enable/disable for the addon.",
     function() return TooltipExtraDataDB.enabled end,
@@ -1802,7 +2074,7 @@ panel:SetScript("OnShow", function(self)
   table.insert(self._checks, enabledCB)
 
   local stackCB = CreateCheck(
-    self,
+    content,
     "Show Stack",
     "Shows current/max normally, and owned/max in AH/Auctionator.",
     function() return TooltipExtraDataDB.modules.stack end,
@@ -1812,7 +2084,7 @@ panel:SetScript("OnShow", function(self)
   table.insert(self._checks, stackCB)
 
   local itemIdCB = CreateCheck(
-    self,
+    content,
     "Show ItemID",
     "Adds ItemID to item tooltips.",
     function() return TooltipExtraDataDB.modules.itemid end,
@@ -1822,7 +2094,7 @@ panel:SetScript("OnShow", function(self)
   table.insert(self._checks, itemIdCB)
 
   local spellIdCB = CreateCheck(
-    self,
+    content,
     "Show SpellID",
     "Adds SpellID to spell tooltips.",
     function() return TooltipExtraDataDB.modules.spellid end,
@@ -1832,7 +2104,7 @@ panel:SetScript("OnShow", function(self)
   table.insert(self._checks, spellIdCB)
 
   local iconIdCB = CreateCheck(
-    self,
+    content,
     "Show IconID",
     "Adds IconID (texture FileID) below ItemID/SpellID.",
     function() return TooltipExtraDataDB.modules.iconid end,
@@ -1842,7 +2114,7 @@ panel:SetScript("OnShow", function(self)
   table.insert(self._checks, iconIdCB)
 
   local playerInfoCB = CreateCheck(
-    self,
+    content,
     "Show Player Spec + ItemLvl + Repair",
     "Uses inspect data to add specialization, average item level, and equipment repair percentage to player tooltips.",
     function() return TooltipExtraDataDB.modules.playerinfo end,
@@ -1852,7 +2124,7 @@ panel:SetScript("OnShow", function(self)
   table.insert(self._checks, playerInfoCB)
 
   local playerSelfCB = CreateCheck(
-    self,
+    content,
     "Show Own Spec + ItemLvl + Repair",
     "Shows your own specialization, average item level, and equipment repair percentage on your own player tooltip.",
     function() return TooltipExtraDataDB.modules.playerself end,
@@ -1861,9 +2133,121 @@ panel:SetScript("OnShow", function(self)
   playerSelfCB:SetPoint("TOPLEFT", playerInfoCB, "BOTTOMLEFT", 0, -10)
   table.insert(self._checks, playerSelfCB)
 
-  local hint = self:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-  hint:SetPoint("TOPLEFT", playerInfoCB, "BOTTOMLEFT", 2, -14)
+  -- ---- Profession icons
+  local profHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+  profHeader:SetPoint("TOPLEFT", playerSelfCB, "BOTTOMLEFT", 2, -20)
+  profHeader:SetText("Profession Icons")
+
+  local profIconsCB = CreateCheck(
+    content,
+    "Show Profession Icons",
+    "Shows the icons of the professions that use the item as a reagent in some recipe.",
+    function() return TooltipExtraDataDB.modules.proficons end,
+    function(v) TooltipExtraDataDB.modules.proficons = v end
+  )
+  profIconsCB:SetPoint("TOPLEFT", profHeader, "BOTTOMLEFT", -2, -8)
+  table.insert(self._checks, profIconsCB)
+
+  local positionGroup = CreateRadioGroup(
+    content,
+    "Position",
+    {
+      { value = "bottom", text = "End of tooltip" },
+      { value = "title",  text = "Below item name" },
+    },
+    function() return TooltipExtraDataDB.professionIcons.position end,
+    function(v) TooltipExtraDataDB.professionIcons.position = v end,
+    2
+  )
+  positionGroup:SetPoint("TOPLEFT", profIconsCB, "BOTTOMLEFT", 4, -10)
+  table.insert(self._checks, positionGroup)
+
+  local sizeGroup = CreateRadioGroup(
+    content,
+    "Icon Size",
+    {
+      { value = "small",  text = "Small" },
+      { value = "medium", text = "Medium" },
+      { value = "large",  text = "Large" },
+    },
+    function() return TooltipExtraDataDB.professionIcons.size end,
+    function(v) TooltipExtraDataDB.professionIcons.size = v end,
+    3
+  )
+  sizeGroup:SetPoint("TOPLEFT", positionGroup, "BOTTOMLEFT", 0, -10)
+  table.insert(self._checks, sizeGroup)
+
+  local filterGroup = CreateRadioGroup(
+    content,
+    "Professions",
+    {
+      { value = "all",     text = "All" },
+      { value = "learned", text = "Learned only" },
+      { value = "manual",  text = "Manual selection" },
+    },
+    function() return TooltipExtraDataDB.professionIcons.filter end,
+    function(v) TooltipExtraDataDB.professionIcons.filter = v end,
+    3
+  )
+  filterGroup:SetPoint("TOPLEFT", sizeGroup, "BOTTOMLEFT", 0, -10)
+
+  -- Only professions that exist in this client. The checks always show which professions the
+  -- current filter displays (all, learned or manual); they can only be changed in manual mode.
+  local professionChecks = {}
+  local lastProfessionCheck = filterGroup
+  for i, skillLine in ipairs(GetAvailableProfessions()) do
+    local cb = CreateCheck(
+      content,
+      GetProfessionDisplayName(skillLine),
+      nil,
+      function()
+        local settings = TooltipExtraDataDB.professionIcons
+        if settings.filter == "all" then
+          return true
+        elseif settings.filter == "learned" then
+          return HasBit(GetLearnedProfessionMask(), PROFESSION_BITS[skillLine])
+        end
+        return settings.selected[skillLine]
+      end,
+      function(v) TooltipExtraDataDB.professionIcons.selected[skillLine] = v end
+    )
+    local column = (i - 1) % 3
+    local row = math.floor((i - 1) / 3)
+    cb:SetPoint("TOPLEFT", filterGroup, "BOTTOMLEFT", column * 150, -4 - row * 24)
+    professionChecks[#professionChecks + 1] = cb
+    if column == 0 then
+      lastProfessionCheck = cb
+    end
+  end
+
+  function filterGroup:OnRefresh(current)
+    local manual = current == "manual"
+    for _, cb in ipairs(professionChecks) do
+      cb:SetEnabled(manual)
+      if manual then
+        cb.Text:SetTextColor(HIGHLIGHT_FONT_COLOR:GetRGB())
+      else
+        cb.Text:SetTextColor(GRAY_FONT_COLOR:GetRGB())
+      end
+      cb:Refresh()
+    end
+  end
+  filterGroup:Refresh()
+  table.insert(self._checks, filterGroup)
+
+  local hint = content:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+  hint:SetPoint("TOPLEFT", lastProfessionCheck, "BOTTOMLEFT", 2, -14)
   hint:SetText("Tip: Use /ted for quick toggles. /reload refreshes existing tooltips.")
+
+  -- Size the scroll child to its content once the layout has been resolved.
+  local function UpdateContentHeight()
+    local top, bottom = content:GetTop(), hint:GetBottom()
+    if top and bottom then
+      content:SetHeight(top - bottom + 16)
+    end
+  end
+  self.UpdateContentHeight = UpdateContentHeight
+  C_Timer.After(0, UpdateContentHeight)
 end)
 
 if InterfaceOptions_AddCategory then

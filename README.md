@@ -8,8 +8,25 @@ Available from [Curseforge](https://www.curseforge.com/wow/addons/tooltipextrada
 *   shows SpellID on spell tooltips
 *   shows IconID (texture FileID) below ItemID/SpellID
 *   shows Player Ilvl
+*   shows icons of the professions that use the item as a reagent in some recipe
 
 Supports Retail (Midnight) and WoW Forever
+
+## Profession icons
+
+Item tooltips show the icons of the professions that use the item as a reagent. Options (Settings → AddOns → TooltipExtraData):
+
+*   **Position:** end of the tooltip (default) or below the item name
+*   **Icon size:** small, medium (default) or large
+*   **Professions:** all (default), learned only, or a manual selection
+
+## Commands
+
+*   `/ted on | off` enables or disables the addon
+*   `/ted stack | itemid | spellid | iconid | playerinfo | playerself | proficons` toggles each feature
+*   `/ted proficons bottom | title` sets the profession icon position
+*   `/ted proficons small | medium | large` sets the profession icon size
+*   `/ted proficons all | learned | manual` sets the profession filter
 
 ## Releasing
 
@@ -20,5 +37,15 @@ Releases are packaged and uploaded to CurseForge by the [BigWigs packager](https
 3.  Push a tag: `git tag vX.Y.Z` and `git push origin vX.Y.Z`.
 
 The workflow reads the CurseForge project ID and game versions from the TOC (`## X-Curse-Project-ID`, `## Interface`), uses `CHANGELOG.md` as the release notes and excludes the files listed in `.pkgmeta`. Tags containing `alpha` or `beta` are uploaded with that release type.
+
+### Profession data
+
+`Data/ProfessionData_Retail.lua` and `Data/ProfessionData_Forever.lua` are generated from the game data tables published by [wago.tools](https://wago.tools). Regenerate them after each game patch that adds or changes recipes:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-profession-data.ps1
+```
+
+By default it uses the latest Retail (`wow`) and Forever (`wowf`) builds; pass `-RetailBuild` / `-ForeverBuild` to pin a build.
 
 Required repository secret: `CF_API_KEY` (CurseForge API token). Optional: `WOWI_API_TOKEN` for WoWInterface.

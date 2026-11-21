@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project follows Semantic Versioning.
 
+## [1.6.0] - 2026-11-21
+
+### Added
+- Profession icons on item tooltips: shows the icons of the professions that use the item as a reagent in some recipe (Retail and Forever).
+- Options for profession icons: position (end of tooltip or below the item name), icon size (small, medium, large) and profession filter (all, learned only or manual selection).
+- `/ted proficons` to toggle the icons, plus `/ted proficons bottom|title`, `small|medium|large` and `all|learned|manual`.
+- `scripts/build-profession-data.ps1` generates the reagent data from the game data tables (wago.tools).
+
+### Changed
+- The options panel now scrolls, with the profession icon options below the existing ones. The profession checkboxes always show which professions the current filter displays, and can only be changed with "Manual selection".
+
+### Fixed
+- The options panel hint no longer overlaps the "Show Own Spec + ItemLvl + Repair" checkbox.
+
 ## [1.5.0] - 2026-11-06
 
 ### Added
@@ -105,7 +119,7 @@ and this project follows Semantic Versioning.
 - Optimized inspect queue processing to minimize unnecessary API calls.
 
 ### Stability
-- Improved compatibility with Retail security restrictions related to â€œsecretâ€ values.
+- Improved compatibility with Retail security restrictions related to Ã¢â‚¬Å“secretÃ¢â‚¬Â values.
 - Hardened tooltip update behavior during rapid mouseover changes.
 - Improved consistency of player info display across delayed inspect callbacks and tooltip refreshes.
 
